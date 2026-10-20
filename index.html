@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>قصر الرعب الناجي - لعبة البقاء</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0b0b0e;
+            color: #fff;
+            font-family: 'Tahoma', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.9);
+            border: 3px solid #332222;
+            background: #121015;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background: #18161f;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            font-size: 15px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        .hud-box {
+            background: rgba(20, 20, 25, 0.85);
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #443333;
+        }
+        #message-box {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 10, 15, 0.9);
+            border: 2px solid #662222;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 14px;
+            color: #ffcccc;
+            pointer-events: none;
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.3);
+            display: none;
+        }
+        #controls-hint {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #aaa;
+            text-align: center;
+        }
+        #mobile-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 8px;
+        }
+        .m-btn {
+            background: #2a2233;
+            color: white;
+            border: 1px solid #554466;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui-overlay">
+            <div class="hud-box" id="coin-display">💰 النقود: 0</div>
+            <div class="hud-box" id="timer-display" style="color: #ff6666;">⏳ ظهور الوحش: 30 ثانية</div>
+            <div class="hud-box" id="status-display">الحالة: تجول</div>
+        </div>
+        <div id="message-box">رسالة</div>
+    </div>
+
+    <div id="controls-hint">التحكم: <b>الأسهم الأربعة</b> للحركة | <b>E</b> للنوم | أرقام <b>1-4</b> للتطوير وبناء الأسلحة</div>
+    
+    <div id="mobile-controls">
+        <button class="m-btn" onclick="handleInteraction()">النوم (E)</button>
+        <button class="m-btn" onclick="handleUpgradeOrBuild(1)">غرفة 1</button>
+        <button class="m-btn" onclick="handleUpgradeOrBuild(2)">غرفة 2</button>
+        <button class="m-btn" onclick="handleUpgradeOrBuild(3)">غرفة 3</button>
+        <button class="m-btn" onclick="handleUpgradeOrBuild(4)">غرفة 4</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let coins = 0;
+        let gameTime = 0;
+        let monsterSpawnTime = 30;
+        let monsterSpawned = false;
+        let gameOver = false;
+        let gameWon = false;
+
+        let player = {
+            x: 400,
+            y: 300,
+            radius: 12,
+            speed: 3.2,
+            isSleeping: false,
+            currentBed: null
+        };
+
+        let keys = {};
+        window.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            if (e.key.toLowerCase() === 'e') handleInteraction();
+            if (['1', '2', '3', '4'].includes(e.key)) handleUpgradeOrBuild(parseInt(e.key));
+        });
+        window.addEventListener('keyup', e => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // 4 Rooms Setup with Doors and HP
+        let rooms = [
+            { id: 1, x: 50, y: 50, w: 320, h: 220, name: "الغرفة الشمالية الغربية", bed: { x: 100, y: 100, level: 1 }, door: { x: 370, y: 140, w: 20, h: 60, hp: 100, maxHp: 100, level: 1, broken: false }, weaponSlot: { x: 200, y: 100, weapon: null } },
+            { id: 2, x: 430, y: 50, w: 320, h: 220, name: "الغرفة الشمالية الشرقية", bed: { x: 480, y: 100, level: 1 }, door: { x: 410, y: 140, w: 20, h: 60, hp: 100, maxHp: 100, level: 1, broken: false }, weaponSlot: { x: 580, y: 100, weapon: null } },
+            { id: 3, x: 50, y: 330, w: 320, h: 220, name: "الغرفة الجنوبية الغربية", bed: { x: 100, y: 380, level: 1 }, door: { x: 370, y: 410, w: 20, h: 60, hp: 100, maxHp: 100, level: 1, broken: false }, weaponSlot: { x: 200, y: 380, weapon: null } },
+            { id: 4, x: 430, y: 330, w: 320, h: 220, name: "الغرفة الجنوبية الشرقية", bed: { x: 480, y: 380, level: 1 }, door: { x: 410, y: 410, w: 20, h: 60, hp: 100, maxHp: 100, level: 1, broken: false }, weaponSlot: { x: 580, y: 380, weapon: null } }
+        ];
+
+        let monster = {
+            x: 400,
+            y: 300,
+            radius: 16,
+            speed: 1.3,
+            hp: 200,
+            maxHp: 200,
+            active: false,
+            targetDoor: null,
+            attackCooldown: 0
+        };
+
+        function showMessage(text, duration = 3000) {
+            const msgBox = document.getElementById('message-box');
+            msgBox.innerText = text;
+            msgBox.style.display = 'block';
+            setTimeout(() => { msgBox.style.display = 'none'; }, duration);
+        }
+
+        function handleInteraction() {
+            if (gameOver || gameWon) return;
+            if (player.isSleeping) {
+                showMessage("أنت نائم بعمق ولن تستطيع النهوض!");
+                return;
+            }
+            for (let room of rooms) {
+                let dist = Math.hypot(player.x - room.bed.x, player.y - room.bed.y);
+                if (dist < 45) {
+                    player.isSleeping = true;
+                    player.currentBed = room.bed;
+                    player.x = room.bed.x;
+                    player.y = room.bed.y + 15;
+                    document.getElementById('status-display').innerText = "الحالة: نائم 💤";
+                    showMessage("لقد نمت في السرير! تبدأ في كسب العملات كل ثانية.");
+                    break;
+                }
+            }
+        }
+
+        function handleUpgradeOrBuild(roomNum) {
+            if (gameOver || gameWon) return;
+            let room = rooms[roomNum - 1];
+            if (!room) return;
+
+            let distToBed = Math.hypot(player.x - room.bed.x, player.y - room.bed.y);
+            let distToWeapon = Math.hypot(player.x - room.weaponSlot.x, player.y - room.weaponSlot.y);
+
+            if (distToBed < 60) {
+                let cost = room.bed.level * 30;
+                if (coins >= cost) {
+                    coins -= cost;
+                    room.bed.level++;
+                    showMessage(`تم ترقية سرير ${room.name} لمستوى ${room.bed.level}!`);
+                } else {
+                    showMessage(`تحتاج إلى ${cost} عملة لترقية السرير.`);
+                }
+            } else if (distToWeapon < 60) {
+                if (!room.weaponSlot.weapon) {
+                    let cost = 40;
+                    if (coins >= cost) {
+                        coins -= cost;
+                        room.weaponSlot.weapon = { level: 1, damage: 12, range: 180, cooldown: 0 };
+                        showMessage(`تم بناء سلاح دفاعي في ${room.name}!`);
+                    } else {
+                        showMessage(`تحتاج إلى 40 عملة لبناء السلاح.`);
+                    }
+                } else {
+                    let cost = room.weaponSlot.weapon.level * 50;
+                    if (coins >= cost) {
+                        coins -= cost;
+                        room.weaponSlot.weapon.level++;
+                        room.weaponSlot.weapon.damage += 8;
+                        showMessage(`تم ترقية السلاح في ${room.name}!`);
+                    } else {
+                        showMessage(`تحتاج إلى ${cost} عملة لترقية السلاح.`);
+                    }
+                }
+            } else {
+                let cost = room.door.level * 35;
+                if (coins >= cost) {
+                    coins -= cost;
+                    room.door.level++;
+                    room.door.maxHp += 50;
+                    room.door.hp = room.door.maxHp;
+                    room.door.broken = false;
+                    showMessage(`تم ترقية وإصلاح باب ${room.name}!`);
+                } else {
+                    showMessage(`تحتاج إلى ${cost} عملة لترقية الباب.`);
+                }
+            }
+        }
+
+        setInterval(() => {
+            if (gameOver || gameWon) return;
+            gameTime++;
+            if (!monsterSpawned && gameTime >= monsterSpawnTime) {
+                monsterSpawned = true;
+                monster.active = true;
+                showMessage("⚠️ ظهر الوحش المرعب ويحاول تحطيم الأبواب!", 5000);
+            }
+            if (player.isSleeping && player.currentBed) {
+                coins += player.currentBed.level;
+            }
+        }, 1000);
+
+        function update() {
+            if (gameOver || gameWon) return;
+
+            // Player Movement using Arrow keys
+            if (!player.isSleeping) {
+                let dx = 0;
+                let dy = 0;
+                if (keys['arrowup']) dy -= 1;
+                if (keys['arrowdown']) dy += 1;
+                if (keys['arrowleft']) dx -= 1;
+                if (keys['arrowright']) dx += 1;
+
+                if (dx !== 0 && dy !== 0) {
+                    dx *= 0.7071;
+                    dy *= 0.7071;
+                }
+
+                player.x += dx * player.speed;
+                player.y += dy * player.speed;
+                player.x = Math.max(70, Math.min(canvas.width - 70, player.x));
+                player.y = Math.max(70, Math.min(canvas.height - 70, player.y));
+            }
+
+            // Monster Logic with Door Breaking System
+            if (monster.active) {
+                // Find an unbroken door or target player if doors are broken
+                let targetX = player.x;
+                let targetY = player.y;
+                let attackingDoor = null;
+
+                for (let room of rooms) {
+                    if (!room.door.broken) {
+                        let doorCenterX = room.door.x + room.door.w / 2;
+                        let doorCenterY = room.door.y + room.door.h / 2;
+                        let distToDoor = Math.hypot(monster.x - doorCenterX, monster.y - doorCenterY);
+                        
+                        // If near a door, attack it first!
+                        if (distToDoor < 35) {
+                            attackingDoor = room.door;
+                            break;
+                        } else if (!attackingDoor) {
+                            // Move towards closest unbroken door first
+                            targetX = doorCenterX;
+                            targetY = doorCenterY;
+                        }
+                    }
+                }
+
+                if (attackingDoor) {
+                    // Monster attacks the door HP
+                    if (monster.attackCooldown > 0) {
+                        monster.attackCooldown--;
+                    } else {
+                        attackingDoor.hp -= 10;
+                        monster.attackCooldown = 30; // attack speed
+                        if (attackingDoor.hp <= 0) {
+                            attackingDoor.broken = true;
+                            showMessage("💥 لقد قام الوحش بكسر أحد الأبواب واقتحام الغرفة!");
+                        }
+                    }
+                } else {
+                    // Move towards monster target
+                    let angle = Math.atan2(targetY - monster.y, targetX - monster.x);
+                    monster.x += Math.cos(angle) * monster.speed;
+                    monster.y += Math.sin(angle) * monster.speed;
+                }
+
+                // Check collision with player
+                let distToPlayer = Math.hypot(monster.x - player.x, monster.y - player.y);
+                if (distToPlayer < monster.radius + player.radius) {
+                    gameOver = true;
+                    showMessage("💀 تمكن الوحش من الإمساك بك والقضاء عليك!", 10000);
+                }
+
+                // Weapons attack the monster automatically
+                for (let room of rooms) {
+                    if (room.weaponSlot.weapon) {
+                        let wSlot = room.weaponSlot;
+                        let distToMonster = Math.hypot(monster.x - wSlot.x, monster.y - wSlot.y);
+                        if (distToMonster <= wSlot.weapon.range) {
+                            if (wSlot.weapon.cooldown > 0) {
+                                wSlot.weapon.cooldown--;
+                            } else {
+                                monster.hp -= wSlot.weapon.damage;
+                                wSlot.weapon.cooldown = 40;
+                                if (monster.hp <= 0) {
+                                    gameWon = true;
+                                    monster.active = false;
+                                    showMessage("🎉 تهانينا! لقد قضيت على الوحش ونجوت من القصر!", 15000);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update UI
+            document.getElementById('coin-display').innerText = `💰 النقود: ${coins}`;
+            if (!monsterSpawned) {
+                document.getElementById('timer-display').innerText = `⏳ ظهور الوحش: ${monsterSpawnTime - gameTime} ثانية`;
+            } else {
+                document.getElementById('timer-display').innerText = `👹 دم الوحش: ${monster.hp}/${monster.maxHp}`;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Rooms
+            for (let room of rooms) {
+                ctx.fillStyle = '#1e1b26';
+                ctx.fillRect(room.x, room.y, room.w, room.h);
+                ctx.strokeStyle = '#3a324a';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(room.x, room.y, room.w, room.h);
+
+                ctx.fillStyle = '#665577';
+                ctx.font = '11px Tahoma';
+                ctx.fillText(room.name, room.x + 10, room.y + 20);
+
+                // Bed
+                ctx.fillStyle = room.bed === player.currentBed ? '#44aa44' : '#884444';
+                ctx.fillRect(room.bed.x - 15, room.bed.y - 25, 30, 50);
+                ctx.fillStyle = '#ffcccc';
+                ctx.fillRect(room.bed.x - 12, room.bed.y - 22, 24, 15);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '10px Tahoma';
+                ctx.fillText(`Lv.${room.bed.level}`, room.bed.x - 12, room.bed.y + 35);
+
+                // Door & Door HP Bar
+                if (!room.door.broken) {
+                    ctx.fillStyle = '#553322';
+                    ctx.fillRect(room.door.x, room.door.y, room.door.w, room.door.h);
+                    ctx.strokeStyle = '#774433';
+                    ctx.strokeRect(room.door.x, room.door.y, room.door.w, room.door.h);
+                    
+                    // Door HP bar
+                    ctx.fillStyle = '#ff3333';
+                    ctx.fillRect(room.door.x, room.door.y - 8, room.door.w, 4);
+                    ctx.fillStyle = '#33ff33';
+                    let hpPercent = Math.max(0, room.door.hp / room.door.maxHp);
+                    ctx.fillRect(room.door.x, room.door.y - 8, room.door.w * hpPercent, 4);
+                } else {
+                    ctx.fillStyle = '#221111';
+                    ctx.fillRect(room.door.x, room.door.y, room.door.w, room.door.h);
+                }
+
+                // Weapon Slot
+                ctx.strokeStyle = '#555566';
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.arc(room.weaponSlot.x, room.weaponSlot.y, 14, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                if (room.weaponSlot.weapon) {
+                    ctx.fillStyle = '#33ccff';
+                    ctx.beginPath();
+                    ctx.arc(room.weaponSlot.x, room.weaponSlot.y, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '9px Tahoma';
+                    ctx.fillText(`W${room.weaponSlot.weapon.level}`, room.weaponSlot.x - 10, room.weaponSlot.y + 3);
+                }
+            }
+
+            // Hallway
+            ctx.fillStyle = '#16141c';
+            ctx.fillRect(370, 50, 60, 500);
+
+            // Player
+            ctx.fillStyle = player.isSleeping ? '#44cc88' : '#e0e060';
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Monster
+            if (monster.active && !gameWon) {
+                ctx.fillStyle = '#cc2222';
+                ctx.beginPath();
+                ctx.arc(monster.x, monster.y, monster.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ffcccc';
+                ctx.stroke();
+            }
+
+            // Game Over / Win Screens
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 28px Tahoma';
+                ctx.textAlign = 'center';
+                ctx.fillText("انتهت اللعبة - قُتلت بواسطة الوحش", canvas.width / 2, canvas.height / 2);
+                ctx.textAlign = 'left';
+            } else if (gameWon) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#44ff44';
+                ctx.font = 'bold 28px Tahoma';
+                ctx.textAlign = 'center';
+                ctx.fillText("تهانينا! لقد قضيت على الوحش ونجوت", canvas.width / 2, canvas.height / 2);
+                ctx.textAlign = 'left';
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+  </html>
+  
